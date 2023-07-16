@@ -17,6 +17,8 @@ grayColour="\e[0;37m\033[1m"
 # time curl -s "$unconfirmed_transactions" | grep -oP 'fFAyKv">\K[^<]+' | cut -d ' ' -f 2
 # price dollar "$unconfirmed_transactions" | curl -s "https://www.blockchain.com/explorer/mempool/btc" | grep -oP '(?<=\$<!-- -->)[0-9.]+'
 
+# senders -> curl -s "https://blockchair.com/bitcoin/transaction/"| awk '/Senders/,/Recipients/ {print}' | grep  -oP '(?<=recipient\":\").*?(?=\")'
+
 trap ctrl_c INT
 
 function ctrl_c(){
@@ -173,7 +175,7 @@ function unconfirmedTransactions(){
 	echo -ne "${endColour}"
 	echo -ne "${blueColour}"
 
-	total="Total_${amount}BTC"
+	total="Total_${amount}"
 
 	printTable '_' $total
 
@@ -183,12 +185,47 @@ function unconfirmedTransactions(){
 	tput cnorm
 }
 
+function inspectTx(){
+
+	tx_hash=$1
+
+	# senders -> curl -s "https://blockchair.com/bitcoin/transaction/"| awk '/Senders/,/Recipients/ {print}' | grep  -oP '(?<=recipient\":\").*?(?=\")'
+
+	output=$(curl -s "https://blockchair.com/bitcoin/transaction/$tx_hash" | html2text) && echo "$output" | awk '/Sender/,/Recipient/ {print}' | grep -oP '(?<=recipient\":\").*?(?=")' > addresses.tmp && echo "$output" | awk '/Sender/,/Recipient/ {print}' | grep  -oP '(?<=____).*?(?=BTC)' > amounts.tmp
+
+	paste -d '\n' addresses.tmp amounts.tmp > spenders.tmp 
+
+	rm -r addresses.tmp amounts.tmp 2>/dev/null
+
+	spenders=$(cat spenders.tmp | grep -P '[a-zA-Z]')
+
+	amount=0
+
+	echo "spender_amount" > ut.table
+
+	for spender in $spenders; do
+		echo ${spender}_$(cat spenders.tmp | grep "$spender" -A 1 | tail -n 1 | grep -o '[^[:space:]]*') >> ut.table
+		value=$(cat spenders.tmp | grep "$spender" -A 1 | tail -n 1 | grep -P '[0-9]')
+		amount=$(echo "$amount + $value" | tr -d '\302\240' | bc)
+	done
+
+	echo "Total_${amount}" >> ut.table
+
+	printTable '_' "$(cat ut.table)"
+
+	rm *.tmp 2>/dev/null
+	rm ut.table 2>/dev/null
+
+	tput cnorm
+}
+
 parameter_counter=0;
 
-while getopts "e:n:h" arg; do
+while getopts "e:n:i:h" arg; do
 	case $arg in
 		e) exploration_mode=$OPTARG; let parameter_counter+=1;;
 		n) number_output=$OPTARG; let parameter_counter+=1;;
+		i) tx_hash=$OPTARG; let parameter_counter+=1;;
 		h) helpPanel;;
 	esac
 done
@@ -205,5 +242,9 @@ else
 		else
 			unconfirmedTransactions $number_output
 		fi
+	fi
+
+	if [ "$(echo $exploration_mode)" == "inspect" ]; then
+		inspectTx $tx_hash
 	fi
 fi
